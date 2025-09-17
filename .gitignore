@@ -1,0 +1,57 @@
+# Node modules
+node_modules/
+
+# Build output
+build/
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependency directories
+jspm_packages/
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Webpack output
+webpack-layer/nodejs/node_modules/
+webpack-layer/nodejs/package-lock.json
+webpack-layer/nodejs/yarn.lock
+
+# Misc
+*.zip
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# React build
+react-template-test/build/
+react-template-test/node_modules/
+react-template-test/package-lock.json
+react-template-test/yarn.lock
+
+# Others
+*.log
+*.tmp
+*.bak
+
+# Ignore coverage reports
+coverage/
+
+# Ignore Mac system files
+*.DS_Store
+
+# Ignore Windows system files
+*.Thumbs.db

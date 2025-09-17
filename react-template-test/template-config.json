@@ -1,0 +1,36 @@
+{
+  "templateName": "simple-business",
+  "templateVersion": "1.0.0",
+  "description": "Template React simples para sites corporativos",
+  "customizable": {
+    "siteName": "Nome da empresa",
+    "siteTitle": "Título principal do site",
+    "siteDescription": "Descrição do negócio",
+    "primaryColor": "Cor principal do tema",
+    "secondaryColor": "Cor secundária do tema",
+    "services": "Lista de serviços oferecidos",
+    "contact": {
+      "email": "Email de contato",
+      "phone": "Telefone de contato", 
+      "address": "Endereço da empresa"
+    }
+  },
+  "buildConfig": {
+    "outputFormat": "static",
+    "minification": true,
+    "optimization": true,
+    "sourceMaps": false
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "buildDependencies": {
+    "webpack": "^5.88.0",
+    "html-webpack-plugin": "^5.5.0",
+    "babel-loader": "^9.1.0",
+    "@babel/preset-react": "^7.22.0",
+    "css-loader": "^6.8.0",
+    "style-loader": "^3.3.0"
+  }
+}
