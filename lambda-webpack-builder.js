@@ -1,7 +1,7 @@
 const AWS = require('aws-sdk');
 const fs = require('fs').promises;
 const path = require('path');
-const { execSync } = require('child_process');
+const AdmZip = require('adm-zip'); // Biblioteca para descompactar ZIP
 
 // Configurar AWS SDK
 const s3 = new AWS.S3();
@@ -20,11 +20,9 @@ exports.handler = async (event) => {
     try {
         // Validar input
         const { templateName, projectName, config } = event;
-        
         if (!templateName || !projectName) {
             throw new Error('templateName and projectName are required');
         }
-        
         console.log(`📦 Building project: ${projectName} using template: ${templateName}`);
         
         // 1. Baixar template do S3
@@ -35,7 +33,7 @@ exports.handler = async (event) => {
         console.log('⚙️ Applying custom configuration...');
         await applyConfiguration(templatePath, config || {});
         
-        // 3. Executar webpack build
+        // 3. Executar webpack build (dependências de build já estão no Layer)
         console.log('🔨 Running webpack build...');
         const buildResult = await runWebpackBuild(templatePath);
         
@@ -44,18 +42,15 @@ exports.handler = async (event) => {
         const websiteUrl = await uploadWebsite(projectName, path.join(templatePath, 'dist'));
         
         const duration = Date.now() - startTime;
-        
         const response = {
             statusCode: 200,
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 success: true,
-                projectName: projectName,
-                templateName: templateName,
-                websiteUrl: websiteUrl,
-                buildResult: buildResult,
+                projectName,
+                templateName,
+                websiteUrl,
+                buildResult,
                 timing: {
                     duration: `${duration}ms`,
                     started: new Date(startTime).toISOString(),
@@ -68,22 +63,16 @@ exports.handler = async (event) => {
                 }
             }, null, 2)
         };
-        
         console.log('✅ Build completed successfully');
         console.log(`⏱️ Total duration: ${duration}ms`);
-        
         return response;
         
     } catch (error) {
         const duration = Date.now() - startTime;
-        
         console.error('❌ Build failed:', error);
-        
         return {
             statusCode: 500,
-            headers: {
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 success: false,
                 error: error.message,
@@ -97,36 +86,23 @@ exports.handler = async (event) => {
     }
 };
 
-// Função para baixar template do S3
+// Função para baixar e descompactar template do S3
 async function downloadTemplate(templateName) {
     const templateKey = `${TEMPLATES_PREFIX}${templateName}.zip`;
     const tempDir = `/tmp/${templateName}-${Date.now()}`;
     const zipPath = `${tempDir}.zip`;
-    
     try {
-        // Criar diretório temporário
         await fs.mkdir(tempDir, { recursive: true });
-        
         // Baixar ZIP do S3
         console.log(`📁 Downloading ${templateKey} from S3...`);
-        const object = await s3.getObject({
-            Bucket: BUCKET_NAME,
-            Key: templateKey
-        }).promise();
-        
-        // Salvar ZIP
+        const object = await s3.getObject({ Bucket: BUCKET_NAME, Key: templateKey }).promise();
         await fs.writeFile(zipPath, object.Body);
-        
-        // Extrair ZIP
+        // Extrair ZIP usando adm-zip
         console.log('📦 Extracting template...');
-        execSync(`cd ${tempDir} && unzip -q ${zipPath}`, { 
-            stdio: 'inherit',
-            timeout: 30000 
-        });
-        
+        const zip = new AdmZip(zipPath);
+        zip.extractAllTo(tempDir, true);
         console.log(`✅ Template extracted to ${tempDir}`);
         return tempDir;
-        
     } catch (error) {
         console.error('❌ Error downloading template:', error);
         throw new Error(`Failed to download template: ${error.message}`);
@@ -136,47 +112,30 @@ async function downloadTemplate(templateName) {
 // Função para aplicar configuração customizada
 async function applyConfiguration(templatePath, config) {
     try {
-        // Ler template de configuração
         const configPath = path.join(templatePath, 'template-config.json');
         let templateConfig = {};
-        
         try {
             const configContent = await fs.readFile(configPath, 'utf8');
             templateConfig = JSON.parse(configContent);
         } catch (error) {
             console.log('⚠️ No template-config.json found, using defaults');
         }
-        
-        // Mesclar configurações
-        const finalConfig = {
-            ...templateConfig.customizable,
-            ...config
-        };
-        
-        // Aplicar configurações no HTML
+        const finalConfig = { ...templateConfig.customizable, ...config };
+        // Substituir placeholders no HTML
         const htmlPath = path.join(templatePath, 'public', 'index.html');
         let htmlContent = await fs.readFile(htmlPath, 'utf8');
-        
-        // Substituir placeholders
         if (finalConfig.siteName) {
             htmlContent = htmlContent.replace(/{{SITE_TITLE}}/g, finalConfig.siteName);
         }
         if (finalConfig.siteDescription) {
             htmlContent = htmlContent.replace(/{{SITE_DESCRIPTION}}/g, finalConfig.siteDescription);
         }
-        
         await fs.writeFile(htmlPath, htmlContent);
-        
         // Criar arquivo de configuração para o React
         const reactConfigPath = path.join(templatePath, 'src', 'config.js');
-        const reactConfig = `
-export const SITE_CONFIG = ${JSON.stringify(finalConfig, null, 2)};
-`;
-        
+        const reactConfig = `export const SITE_CONFIG = ${JSON.stringify(finalConfig, null, 2)};\n`;
         await fs.writeFile(reactConfigPath, reactConfig);
-        
         console.log('✅ Configuration applied successfully');
-        
     } catch (error) {
         console.error('❌ Error applying configuration:', error);
         throw new Error(`Failed to apply configuration: ${error.message}`);
@@ -187,45 +146,30 @@ export const SITE_CONFIG = ${JSON.stringify(finalConfig, null, 2)};
 async function runWebpackBuild(templatePath) {
     try {
         const buildStart = Date.now();
-        
-        // Instalar dependências do projeto (runtime dependencies)
-        console.log('📦 Installing runtime dependencies...');
-        execSync('npm install --only=production', {
-            cwd: templatePath,
-            stdio: 'inherit',
-            timeout: 120000 // 2 minutos
-        });
-        
+        // NÃO rodar npm install! As dependências de build já estão no Layer.
         // Executar webpack build
         console.log('⚡ Running webpack build...');
+        const { execSync } = require('child_process');
         const buildOutput = execSync('npx webpack --mode production', {
             cwd: templatePath,
             encoding: 'utf8',
             timeout: 300000 // 5 minutos
         });
-        
         const buildDuration = Date.now() - buildStart;
-        
         // Verificar se dist foi criado
         const distPath = path.join(templatePath, 'dist');
         const distExists = await fs.access(distPath).then(() => true).catch(() => false);
-        
         if (!distExists) {
             throw new Error('Build completed but dist directory was not created');
         }
-        
-        // Listar arquivos gerados
         const distFiles = await fs.readdir(distPath);
-        
         console.log(`✅ Webpack build completed in ${buildDuration}ms`);
         console.log(`📁 Generated files: ${distFiles.join(', ')}`);
-        
         return {
             duration: buildDuration,
             outputFiles: distFiles,
             buildOutput: buildOutput.substring(0, 1000) // Truncar output
         };
-        
     } catch (error) {
         console.error('❌ Webpack build failed:', error);
         throw new Error(`Webpack build failed: ${error.message}`);
@@ -237,39 +181,27 @@ async function uploadWebsite(projectName, distPath) {
     try {
         const uploadStart = Date.now();
         const websitePrefix = `${WEBSITES_PREFIX}${projectName}/`;
-        
-        // Listar todos os arquivos no dist
         const files = await getFilesRecursively(distPath);
-        
         console.log(`📤 Uploading ${files.length} files to S3...`);
-        
-        // Upload de cada arquivo
         const uploadPromises = files.map(async (file) => {
             const relativePath = path.relative(distPath, file);
             const s3Key = `${websitePrefix}${relativePath.replace(/\\/g, '/')}`;
-            
             const fileContent = await fs.readFile(file);
             const contentType = getContentType(file);
-            
             return s3.putObject({
                 Bucket: BUCKET_NAME,
                 Key: s3Key,
                 Body: fileContent,
                 ContentType: contentType,
-                CacheControl: 'max-age=31536000' // 1 ano para assets
+                CacheControl: 'max-age=31536000'
             }).promise();
         });
-        
         await Promise.all(uploadPromises);
-        
         const uploadDuration = Date.now() - uploadStart;
         const websiteUrl = `https://${BUCKET_NAME}.s3.amazonaws.com/${websitePrefix}index.html`;
-        
         console.log(`✅ Website uploaded in ${uploadDuration}ms`);
         console.log(`🌐 Website URL: ${websiteUrl}`);
-        
         return websiteUrl;
-        
     } catch (error) {
         console.error('❌ Upload failed:', error);
         throw new Error(`Upload failed: ${error.message}`);
@@ -280,7 +212,6 @@ async function uploadWebsite(projectName, distPath) {
 async function getFilesRecursively(dir) {
     const files = [];
     const items = await fs.readdir(dir, { withFileTypes: true });
-    
     for (const item of items) {
         const fullPath = path.join(dir, item.name);
         if (item.isDirectory()) {
@@ -289,7 +220,6 @@ async function getFilesRecursively(dir) {
             files.push(fullPath);
         }
     }
-    
     return files;
 }
 
@@ -308,6 +238,5 @@ function getContentType(filePath) {
         '.svg': 'image/svg+xml',
         '.ico': 'image/x-icon'
     };
-    
     return contentTypes[ext] || 'application/octet-stream';
 }
